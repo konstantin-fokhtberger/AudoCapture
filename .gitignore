@@ -1,0 +1,22 @@
+# Local build and IDE state
+.build/
+.swiftpm/
+DerivedData/
+dist/
+.tmp-home/
+.DS_Store
+*.xcuserstate
+xcuserdata/
+# Private/local runtime material
+.env
+.env.*
+!.env.example
+*.log
+*.wav
+*.m4a
+*.mp3
+# Only the shared Run action belongs in version control.
+.codex/*
+!.codex/environments/
+.codex/environments/*
+!.codex/environments/environment.toml

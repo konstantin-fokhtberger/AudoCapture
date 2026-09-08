@@ -1,0 +1,67 @@
+# AudoCapture
+
+Локальное macOS-приложение: микрофон и весь системный звук сохраняются в **один M4A/AAC** после Stop. Нативные SwiftUI, AVAudioEngine, ScreenCaptureKit и AVAudioFile. Внешние encoder-программы не требуются.
+
+## Текущее состояние
+
+Реализованы I1-I4: непрерывная конвертация, безопасные Start/Stop/Quit, обработка ошибок, общая временная шкала и единый датированный M4A. Добавлены компактный UI, таймер, активные источники и обработчики изменения устройств/сна. Автоматические тесты используют синтетическое аудио и реальный системный AAC encoder/decoder. Аппаратная приёмка и распространение коллегам ещё не завершены.
+
+Цель выпуска: Apple Silicon, macOS 14/15/26. Поддержка этой матрицы пока не подтверждена. Package.swift и bundle задают минимальную macOS 14.0; сборки предназначены только для arm64.
+
+- [Закрытый репозиторий](https://github.com/konstantin-fokhtberger/AudoCapture)
+- [Сборка и baseline](docs/05-implementation/2026-09-08_iteration-05-build-baseline.md)
+- [Текущий бэклог](docs/00-overview/2026-09-08_backlog.md)
+- [Требования v2](docs/01-requirements/2026-09-08_requirements-v2.md)
+- [Итерация I4](docs/05-implementation/2026-09-08_iteration-04-ui-and-interruptions.md)
+- [Итерация I3](docs/05-implementation/2026-09-08_iteration-03-single-m4a.md)
+- [Решение о едином M4A](docs/02-decisions/2026-09-08_adr-005_single-native-m4a.md)
+- [Аудит качества кода](docs/07-reports/2026-09-08_code-quality-review.md)
+
+## Использование и файлы
+
+1. Запустить app bundle, предоставить Microphone и Screen Recording permissions.
+2. Выбрать микрофон, нажать «Начать запись», затем «Остановить и сохранить».
+3. Дождаться сохранения: `~/Documents/Recordings/08-09-2026 10-04.m4a`. Имя берётся из локальной даты и времени старта; совпадения получают `(2)`, `(3)`.
+
+M4A содержит AAC stereo, 48 kHz, 192 kbit/s. Микрофон добавляется в оба канала, системное stereo сохраняется. При недоступности одного источника UI показывает неполный результат.
+
+Промежуточные PCM и JSON находятся в `Recordings/.sessions/<UUID>`. PCM, участвовавшие в успешном экспорте, удаляются после проверки M4A. При ошибке исходники сохраняются; «Повторить сохранение» повторяет сохранение последней записи в текущем процессе. Автоматического восстановления после перезапуска/force quit пока нет.
+
+## Сборка и проверки
+
+Нужен полный Xcode со Swift 6.1 или новее. Для runtime-проверок использовать настоящий app bundle:
+
+```bash
+./script/build_and_run.sh --verify
+```
+
+Кнопка Run в Codex вызывает тот же скрипт. Перед перезапуском он запрашивает обычный Quit и ждёт сохранения. Bundle содержит microphone usage description. Запуск raw SwiftPM executable не является проверкой privacy identity и нормального оконного запуска.
+
+```bash
+swift build
+DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer swift test
+swift run AudoCaptureSmokeChecks
+```
+
+Для отдельных bundle:
+
+```bash
+Scripts/build-app-bundle.sh debug
+Scripts/build-app-bundle.sh release
+```
+
+Результаты: `.build/bundles/debug/AudoCaptureApp.app` и `.build/bundles/release/AudoCaptureApp.app`. Сборщик проверяет plist, arm64, совпадение minOS и ad-hoc signature. Версия 0.1.0 (1) хранится в `Config/Info.plist`. Release bundle занимает около 0.97 MiB; это не измерение runtime RAM/CPU.
+
+Текущие автоматические проверки выполнены с полным Xcode и Swift 6.3.3 на macOS 26.6.2. Подпись Developer ID и notarization для передачи коллегам относятся к I6.
+
+## Структура
+
+- `Sources/AudoCaptureApp` - SwiftUI UI и завершение приложения.
+- `Sources/AudoCaptureCore` - захват, разрешения, временная шкала, экспорт и metadata.
+- `Sources/AudoCaptureSmokeChecks` - smoke checks во временном каталоге.
+- `Tests/AudoCaptureCoreTests` - регрессионные и синтетические аудиотесты.
+- `docs` - требования, ADR, бэклог, проверки и история. Апрельские документы описывают историческую версию; текущий путь экспорта определяет ADR-005.
+
+## Оставшиеся проверки
+
+B09: реальные устройства и сон (обработчики уже реализованы). I5: реальные записи, длительная синхронизация, CPU/RAM/диск. I6: подпись, установка на другом Mac и матрица OS. До pilot не заявляются стабильность длительных записей, лёгкость по измерениям и совместимость конкретного транскрибатора.
