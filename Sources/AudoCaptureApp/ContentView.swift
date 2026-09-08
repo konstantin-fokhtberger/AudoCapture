@@ -3,6 +3,7 @@ import SwiftUI
 
 struct ContentView: View {
     @ObservedObject var viewModel: RecordingViewModel
+    @State private var recordingDirectory = RecordingLocation.selectedURL() ?? RecordingLocation.defaultURL
     @AppStorage("compactAppearance") private var isCompact = true
 
     var body: some View {
@@ -152,6 +153,19 @@ struct ContentView: View {
                 Text("Источники записи").font(.caption).foregroundStyle(.secondary)
                 Spacer()
             }
+            HStack(alignment: .center) {
+                VStack(alignment: .leading, spacing: 3) {
+                    Text("Папка сохранения").font(.caption).foregroundStyle(.secondary)
+                    Text(recordingDirectory.path).font(.subheadline)
+                        .lineLimit(2).truncationMode(.middle)
+                        .help(recordingDirectory.path)
+                }
+                Spacer()
+                Button("Выбрать…") { chooseRecordingDirectory() }
+                    .disabled(viewModel.shouldDelayTermination)
+                    .accessibilityLabel("Выбрать папку сохранения")
+            }
+
             Picker("Микрофон", selection: $viewModel.selectedMicrophoneID) {
                 if viewModel.availableMicrophones.isEmpty {
                     Text("Нет доступного устройства").tag(Optional<UInt32>.none)
@@ -222,6 +236,23 @@ struct ContentView: View {
         .padding(24)
         .frame(width: 560)
         .fixedSize(horizontal: false, vertical: true)
+    }
+
+    private func chooseRecordingDirectory() {
+        guard !viewModel.shouldDelayTermination else { return }
+        let panel = NSOpenPanel()
+        panel.title = "Папка для аудиозаписей"
+        panel.prompt = "Выбрать"
+        panel.canChooseFiles = false
+        panel.canChooseDirectories = true
+        panel.allowsMultipleSelection = false
+        panel.canCreateDirectories = true
+        panel.directoryURL = recordingDirectory
+        panel.begin { response in
+            guard response == .OK, let url = panel.url, !viewModel.shouldDelayTermination else { return }
+            RecordingLocation.set(url)
+            recordingDirectory = url
+        }
     }
 
     private var statusTitle: String {

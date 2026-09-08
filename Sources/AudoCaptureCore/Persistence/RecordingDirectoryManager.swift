@@ -12,8 +12,10 @@ public struct RecordingDirectoryManager {
     private let fileManager: FileManager
     private let timeZone: TimeZone?
     private let recordingsRootOverride: URL?
+    private let selectedRoot: @Sendable () -> URL?
 
-    public init(fileManager: FileManager = .default, recordingsRootOverride: URL? = nil, timeZone: TimeZone? = nil) {
+    public init(fileManager: FileManager = .default, recordingsRootOverride: URL? = nil, timeZone: TimeZone? = nil, selectedRoot: @escaping @Sendable () -> URL? = { RecordingLocation.selectedURL() }) {
+        self.selectedRoot = selectedRoot
         self.fileManager = fileManager
         self.timeZone = timeZone
         self.recordingsRootOverride = recordingsRootOverride
@@ -28,10 +30,14 @@ public struct RecordingDirectoryManager {
         let recordingsRoot: URL
         if let recordingsRootOverride {
             recordingsRoot = recordingsRootOverride
+        } else if let selected = selectedRoot() {
+            var isDirectory: ObjCBool = false
+            guard fileManager.fileExists(atPath: selected.path, isDirectory: &isDirectory), isDirectory.boolValue else {
+                throw RecordingError.failedToCreateDirectory("Выбранная папка недоступна. Подключите диск или выберите другую папку сохранения.")
+            }
+            recordingsRoot = selected
         } else {
-            let documents = fileManager.urls(for: .documentDirectory, in: .userDomainMask).first
-                ?? URL(fileURLWithPath: NSHomeDirectory()).appendingPathComponent("Documents", isDirectory: true)
-            recordingsRoot = documents.appendingPathComponent("Recordings", isDirectory: true)
+            recordingsRoot = RecordingLocation.defaultURL
         }
         let sessionsRoot = recordingsRoot.appendingPathComponent(".sessions", isDirectory: true)
         let session = sessionsRoot.appendingPathComponent(UUID().uuidString, isDirectory: true)

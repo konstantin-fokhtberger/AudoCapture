@@ -12,6 +12,8 @@
     <string>dev.codex.AudoCapture</string>
     <key>CFBundleInfoDictionaryVersion</key>
     <string>6.0</string>
+    <key>CFBundleIconFile</key>
+    <string>AppIcon</string>
     <key>CFBundleName</key>
     <string>AudoCapture</string>
     <key>CFBundlePackageType</key>
@@ -19,7 +21,7 @@
     <key>CFBundleShortVersionString</key>
     <string>0.1.0</string>
     <key>CFBundleVersion</key>
-    <string>3</string>
+    <string>4</string>
     <key>LSMinimumSystemVersion</key>
     <string>14.0</string>
     <key>NSHumanReadableCopyright</key>
