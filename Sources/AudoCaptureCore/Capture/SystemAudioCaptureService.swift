@@ -65,6 +65,8 @@ public final class SystemAudioCaptureService: NSObject, @unchecked Sendable {
         return frames
     }
 
+    public func setMuted(_ muted: Bool) { bufferWriter.setMuted(muted) }
+
     public func setFailureHandler(_ handler: @escaping @Sendable (String) -> Void) {
         bufferWriter.setFailureHandler(handler)
     }

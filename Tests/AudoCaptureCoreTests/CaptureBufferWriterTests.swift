@@ -4,6 +4,39 @@ import Testing
 @testable import AudoCaptureCore
 
 struct CaptureBufferWriterTests {
+    @Test(arguments: [16_000.0, 48_000.0])
+    func mutePreservesDurationAndDoesNotLeakAfterUnmute(rate: Double) throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let url = root.appendingPathComponent("mute.wav")
+        let output = try AVAudioFormat.recordingFormat(sampleRate: 48_000, channels: 1)
+        let input = try #require(AVAudioFormat(standardFormatWithSampleRate: rate, channels: 1))
+        let writer = CaptureBufferWriter(writer: PCMFileWriter(url: url, format: output), targetFormat: output)
+        writer.setMuted(true) // Initial mute must survive prepare, before the first buffer.
+        try writer.prepare()
+        let buffer = try #require(AVAudioPCMBuffer(pcmFormat: input, frameCapacity: AVAudioFrameCount(rate)))
+        buffer.frameLength = AVAudioFrameCount(rate)
+        for i in 0..<Int(rate) { buffer.floatChannelData![0][i] = 0.8 }
+        writer.append(buffer)
+        writer.setMuted(false)
+        for i in 0..<Int(rate) { buffer.floatChannelData![0][i] = 0 }
+        writer.append(buffer)
+        for i in 0..<Int(rate) { buffer.floatChannelData![0][i] = 0.4 }
+        writer.append(buffer)
+        writer.setMuted(true)
+        writer.append(buffer)
+        let frames = try writer.finish()
+        #expect(abs(Int(frames) - 192_000) <= 4)
+        let file = try AVAudioFile(forReading: url)
+        let decoded = try #require(AVAudioPCMBuffer(pcmFormat: file.processingFormat, frameCapacity: AVAudioFrameCount(file.length)))
+        try file.read(into: decoded)
+        let samples = try #require(decoded.floatChannelData?[0])
+        #expect((0..<95_900).allSatisfy { abs(samples[$0]) < 0.0001 })
+        #expect((100_000..<140_000).allSatisfy { samples[$0] > 0.3 })
+        #expect((145_000..<Int(frames)).allSatisfy { abs(samples[$0]) < 0.0001 })
+    }
+
     @Test(arguments: [16_000.0, 44_100.0, 48_000.0, 96_000.0])
     func finishDrainsConverterAndClosesFile(rate: Double) throws {
         let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)

@@ -3,13 +3,129 @@ import SwiftUI
 
 struct ContentView: View {
     @ObservedObject var viewModel: RecordingViewModel
+    @AppStorage("compactAppearance") private var isCompact = true
 
     var body: some View {
+        Group {
+            if isCompact { compactView }
+            else { fullView }
+        }
+        .fixedSize()
+        .background(CompactWindowLevel(isCompact: isCompact))
+        .task { viewModel.refreshEnvironment() }
+        .task(id: viewModel.status) {
+            guard viewModel.status == .recording else { return }
+            while !Task.isCancelled {
+                viewModel.updateElapsedTime()
+                do { try await Task.sleep(for: .seconds(1)) }
+                catch { return }
+            }
+        }
+    }
+
+    private var compactView: some View {
+        HStack(spacing: 16) {
+            Button(action: toggleRecording) {
+                Image(systemName: viewModel.status == .recording ? "stop.fill" : "record.circle")
+                    .font(.system(size: 18, weight: .semibold))
+                    .frame(width: 30, height: 30)
+            }
+            .buttonStyle(.borderedProminent)
+            .tint(viewModel.status == .recording ? .red : .accentColor)
+            .disabled(isTransitioning || viewModel.updatingMute)
+            .keyboardShortcut(.defaultAction)
+            .accessibilityLabel(viewModel.status == .recording ? "Остановить и сохранить" : "Начать запись")
+            .help(viewModel.status == .recording ? "Остановить и сохранить" : "Начать запись")
+
+            VStack(spacing: 3) {
+                if isTransitioning {
+                    ProgressView().controlSize(.small)
+                } else {
+                    Image(systemName: hasWarning ? "exclamationmark.triangle.fill" : "dot.radiowaves.left.and.right")
+                        .font(.system(size: 16, weight: .semibold))
+                        .foregroundStyle(hasWarning ? .orange : (viewModel.status == .recording ? .red : Color.secondary))
+                }
+                Text(viewModel.status == .recording ? (viewModel.microphoneMuted && viewModel.systemMuted ? "ТИШИНА" : "ON AIR") : compactStatus)
+                    .font(.system(size: 9, weight: .bold, design: .rounded))
+            }
+            .frame(width: 62)
+            .accessibilityElement(children: .ignore)
+            .accessibilityLabel(statusTitle)
+            .accessibilityValue(viewModel.elapsedText)
+            .help(statusTitle + (hasWarning ? ". Разверните окно для подробностей." : ""))
+            sourceButtons
+            appearanceButton
+        }
+        .padding(10)
+        .frame(width: 278, height: 56)
+    }
+
+    private var sourceButtons: some View {
+        HStack(spacing: 8) {
+            muteButton(microphone: true)
+            muteButton(microphone: false)
+        }
+    }
+
+    private func muteButton(microphone: Bool) -> some View {
+        let muted = microphone ? viewModel.microphoneMuted : viewModel.systemMuted
+        let name = microphone ? "Микрофон" : "Системный звук"
+        return Button { viewModel.toggleMute(microphone: microphone) } label: {
+            Image(systemName: microphone ? (muted ? "mic.slash.fill" : "mic.fill") : "headphones")
+                .font(.system(size: 15))
+                .foregroundStyle(muted ? Color.secondary : Color.accentColor)
+                .frame(width: 24, height: 28)
+                .overlay {
+                    if !microphone && muted {
+                        Rectangle().fill(Color.secondary).frame(width: 23, height: 2).rotationEffect(.degrees(-45))
+                    }
+                }
+        }
+        .buttonStyle(.borderless)
+        .disabled(isTransitioning || viewModel.updatingMute)
+        .accessibilityLabel(name)
+        .accessibilityValue(muted ? "Не попадает в запись" : "Записывается")
+        .help(name + (muted ? ": включить в запись" : ": исключить из записи"))
+    }
+
+    private var appearanceButton: some View {
+        Button { isCompact.toggle() } label: {
+            Image(systemName: isCompact ? "chevron.down" : "chevron.up")
+                .frame(width: 22, height: 26)
+        }
+        .buttonStyle(.borderless)
+        .accessibilityLabel(isCompact ? "Развернуть окно" : "Свернуть окно")
+        .help(isCompact ? "Развернуть настройки" : "Компактный вид")
+    }
+
+    private var isTransitioning: Bool { viewModel.status == .starting || viewModel.status == .processing }
+    private var hasWarning: Bool {
+        viewModel.errorMessage != nil || viewModel.noticeMessage != nil || viewModel.environmentWarning != nil ||
+        viewModel.isMicrophonePermissionMissing || viewModel.isScreenRecordingPermissionMissing ||
+        viewModel.status == .partial || viewModel.status == .failed ||
+        (viewModel.status == .recording && viewModel.activeTracks.count != 2)
+    }
+    private var compactStatus: String {
+        if hasWarning { return "ВНИМАНИЕ" }
+        switch viewModel.status {
+        case .starting: return "ЗАПУСК"
+        case .processing: return "СОХРАНЕНИЕ"
+        case .completed: return "СОХРАНЕНО"
+        default: return "ГОТОВО"
+        }
+    }
+    private func toggleRecording() {
+        if viewModel.status == .recording { viewModel.stopRecording() }
+        else { viewModel.startRecording() }
+    }
+
+    private var fullView: some View {
         VStack(alignment: .leading, spacing: 18) {
             HStack(alignment: .firstTextBaseline) {
                 Text("AudoCapture").font(.title2.bold())
                 Spacer()
                 Text(statusTitle).foregroundStyle(statusColor)
+                appearanceButton
             }
             Text("Микрофон и весь системный звук в одном M4A")
                 .font(.subheadline).foregroundStyle(.secondary)
@@ -28,9 +144,14 @@ struct ContentView: View {
                 }
                 .buttonStyle(.borderedProminent)
                 .keyboardShortcut(.defaultAction)
-                .disabled(viewModel.status == .starting || viewModel.status == .processing)
+                .disabled(isTransitioning || viewModel.updatingMute)
             }
 
+            HStack {
+                sourceButtons
+                Text("Источники записи").font(.caption).foregroundStyle(.secondary)
+                Spacer()
+            }
             Picker("Микрофон", selection: $viewModel.selectedMicrophoneID) {
                 if viewModel.availableMicrophones.isEmpty {
                     Text("Нет доступного устройства").tag(Optional<UInt32>.none)
@@ -42,7 +163,7 @@ struct ContentView: View {
             .disabled(viewModel.shouldDelayTermination)
 
             if viewModel.status == .recording {
-                Text("Записывается: " + viewModel.activeTracks.map { $0 == .microphone ? "микрофон" : "системный звук" }.joined(separator: " + "))
+                Text(viewModel.microphoneMuted && viewModel.systemMuted ? "Оба источника выключены: записывается тишина" : "Записывается: " + viewModel.activeTracks.filter { $0 == .microphone ? !viewModel.microphoneMuted : !viewModel.systemMuted }.map { $0 == .microphone ? "микрофон" : "системный звук" }.joined(separator: " + "))
                     .font(.subheadline)
                     .foregroundStyle(viewModel.activeTracks.count == 2 ? Color.secondary : Color.orange)
             }
@@ -101,15 +222,6 @@ struct ContentView: View {
         .padding(24)
         .frame(width: 560)
         .fixedSize(horizontal: false, vertical: true)
-        .task { viewModel.refreshEnvironment() }
-        .task(id: viewModel.status) {
-            guard viewModel.status == .recording else { return }
-            while !Task.isCancelled {
-                viewModel.updateElapsedTime()
-                do { try await Task.sleep(for: .seconds(1)) }
-                catch { return }
-            }
-        }
     }
 
     private var statusTitle: String {

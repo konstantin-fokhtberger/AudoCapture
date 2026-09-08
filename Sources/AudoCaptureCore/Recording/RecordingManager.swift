@@ -16,6 +16,16 @@ public actor RecordingManager {
 
     private enum Lifecycle { case idle, starting, recording, stopping }
     private var lifecycle: Lifecycle = .idle
+    private var microphoneMuted = false
+    private var systemMuted = false
+
+    public func setMuted(microphone: Bool, system: Bool) async {
+        microphoneMuted = microphone
+        systemMuted = system
+        session?.microphone?.setMuted(microphone)
+        session?.system?.setMuted(system)
+    }
+
     private var session: ActiveSession?
     private var sessionID: UUID?
     private var interruptionReason: String?
@@ -98,6 +108,9 @@ public actor RecordingManager {
             logger: logger,
             preferredMicrophoneDeviceID: preferredMicrophoneDeviceID
         )
+
+        captures.microphone.setMuted(microphoneMuted)
+        captures.system.setMuted(systemMuted)
 
         captures.microphone.setFailureHandler { [weak self] message in
             Task { await self?.captureFailed(.microphone, message: message, sessionID: id) }

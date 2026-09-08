@@ -32,8 +32,20 @@ ARCHS="$(lipo -archs "$STAGED_APP/Contents/MacOS/AudoCaptureApp")"
 MINIMUM_OS="$(/usr/libexec/PlistBuddy -c 'Print :LSMinimumSystemVersion' "$STAGED_APP/Contents/Info.plist")"
 BINARY_OS="$(xcrun vtool -show-build "$STAGED_APP/Contents/MacOS/AudoCaptureApp" | awk '$1 == "minos" { print $2 }')"
 [[ "$BINARY_OS" == "$MINIMUM_OS" ]] || { echo "Deployment mismatch: binary=$BINARY_OS plist=$MINIMUM_OS" >&2; exit 1; }
-# Local ad-hoc signature only. Developer ID/notarization is a separate release gate.
-codesign --force --sign - "$STAGED_APP"
+# Prefer a stable local development identity so TCC survives binary changes.
+# Explicit override: AUDOCAPTURE_SIGNING_IDENTITY=<identity hash or ->.
+SIGNING_IDENTITY="${AUDOCAPTURE_SIGNING_IDENTITY:-}"
+if [[ -z "$SIGNING_IDENTITY" ]]; then
+    DEVELOPMENT_IDENTITIES="$(security find-identity -v -p codesigning | awk '/"Apple Development:/ { print $2 }')"
+    IDENTITY_COUNT="$(printf '%s\n' "$DEVELOPMENT_IDENTITIES" | awk 'NF { n++ } END { print n+0 }')"
+    case "$IDENTITY_COUNT" in
+        0) SIGNING_IDENTITY="-"; echo "Warning: ad-hoc signing; rebuilding may invalidate privacy permissions." >&2 ;;
+        1) SIGNING_IDENTITY="$DEVELOPMENT_IDENTITIES" ;;
+        *) echo "Multiple development identities: set AUDOCAPTURE_SIGNING_IDENTITY explicitly." >&2; exit 2 ;;
+    esac
+fi
+# Apple Development is for local testing, not a Developer ID/notarized distribution.
+codesign --force --sign "$SIGNING_IDENTITY" "$STAGED_APP"
 codesign --verify --strict "$STAGED_APP"
 # Publish only after successful staging and validation. Debug/release never replace each other.
 rm -rf "$APP_PATH"

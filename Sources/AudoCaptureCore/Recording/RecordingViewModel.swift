@@ -16,6 +16,23 @@ public final class RecordingViewModel: ObservableObject {
     @Published public private(set) var availableMicrophones: [MicrophoneDevice] = []
     @Published public var selectedMicrophoneID: UInt32?
 
+    @Published public private(set) var microphoneMuted = false
+    @Published public private(set) var systemMuted = false
+    @Published public private(set) var updatingMute = false
+
+    public func toggleMute(microphone: Bool) {
+        guard !updatingMute, status != .starting, status != .processing else { return }
+        let nextMic = microphone ? !microphoneMuted : microphoneMuted
+        let nextSystem = microphone ? systemMuted : !systemMuted
+        updatingMute = true
+        Task {
+            await manager.setMuted(microphone: nextMic, system: nextSystem)
+            microphoneMuted = nextMic
+            systemMuted = nextSystem
+            updatingMute = false
+        }
+    }
+
     @Published public private(set) var activeTracks: [TrackKind] = []
     @Published public private(set) var elapsedSeconds: Double = 0
     private var hostStartedAt: Double?
@@ -53,7 +70,7 @@ public final class RecordingViewModel: ObservableObject {
     }
 
     public func startRecording() {
-        guard !terminating, status == .idle || status == .completed || status == .partial || status == .failed else { return }
+        guard !updatingMute, !terminating, status == .idle || status == .completed || status == .partial || status == .failed else { return }
         errorMessage = nil
         noticeMessage = nil
         captureFailure = nil
@@ -75,6 +92,7 @@ public final class RecordingViewModel: ObservableObject {
                 }
             }
             do {
+                await manager.setMuted(microphone: microphoneMuted, system: systemMuted)
                 let report = try await manager.startRecording(preferredMicrophoneDeviceID: selectedMicrophoneID)
                 activeTracks = report.activeTracks
                 hostStartedAt = report.hostStartedAt ?? hostTime()
@@ -118,7 +136,7 @@ public final class RecordingViewModel: ObservableObject {
     }
 
     public func stopRecording() {
-        beginStop(openFolder: !terminating)
+        beginStop(openFolder: false)
     }
 
     private func beginStop(openFolder: Bool) {
@@ -144,7 +162,7 @@ public final class RecordingViewModel: ObservableObject {
         status = .processing
         errorMessage = nil
         operation = Task {
-            do { applyStopResult(try await manager.retryExport(openFolder: true)) }
+            do { applyStopResult(try await manager.retryExport(openFolder: false)) }
             catch { status = .failed; errorMessage = error.localizedDescription }
         }
     }

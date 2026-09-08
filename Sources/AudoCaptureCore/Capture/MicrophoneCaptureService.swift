@@ -1,109 +1,147 @@
 @preconcurrency import AVFoundation
-import AudioToolbox
-import Foundation
+import CoreAudio
 import CoreMedia
+import Foundation
 
-public final class MicrophoneCaptureService: @unchecked Sendable {
-    private var configurationObserver: NSObjectProtocol?
-    private let engine = AVAudioEngine()
+/// One explicitly selected input, with no playback graph or system-default mutation.
+public final class MicrophoneCaptureService: NSObject, @unchecked Sendable {
+    private let session = AVCaptureSession()
+    private let output = AVCaptureAudioDataOutput()
+    private let queue = DispatchQueue(label: "com.codex.AudoCapture.microphone")
     private let bufferWriter: CaptureBufferWriter
     private let logger: AppLogger
     private let preferredDeviceID: AudioDeviceID?
+    private var clock: CMClock?
+    private var observers: [NSObjectProtocol] = []
     private(set) public var deviceName: String?
 
-    public init(writer: PCMFileWriter, targetFormat: AVAudioFormat, preferredDeviceID: AudioDeviceID? = nil, logger: AppLogger = .shared, timelineStart: Double? = nil) {
-        self.bufferWriter = CaptureBufferWriter(writer: writer, targetFormat: targetFormat, timelineStart: timelineStart)
+    public init(writer: PCMFileWriter, targetFormat: AVAudioFormat, preferredDeviceID: AudioDeviceID? = nil,
+                logger: AppLogger = .shared, timelineStart: Double? = nil) {
+        bufferWriter = CaptureBufferWriter(writer: writer, targetFormat: targetFormat, timelineStart: timelineStart)
         self.preferredDeviceID = preferredDeviceID
         self.logger = logger
+        super.init()
     }
 
     public func start() async throws {
-        try configurePreferredInputDevice()
-        let input = engine.inputNode
-        let inputFormat = input.inputFormat(forBus: 0)
-        deviceName = AVAudioSessionDeviceResolver.currentInputName(preferredDeviceID: preferredDeviceID)
-
-        try bufferWriter.prepare()
-        input.removeTap(onBus: 0)
-        input.installTap(onBus: 0, bufferSize: 2_048, format: inputFormat) { [weak self] buffer, time in
-            guard let self else { return }
-            guard time.isHostTimeValid else {
-                self.bufferWriter.fail("Microphone timestamp is unavailable.")
-                return
+        try Task.checkCancellation()
+        try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
+            queue.async {
+                do {
+                    try self.startOnQueue()
+                    continuation.resume()
+                } catch { continuation.resume(throwing: error) }
             }
-            self.bufferWriter.append(buffer, at: CMClockMakeHostTimeFromSystemUnits(time.hostTime).seconds)
         }
-
-        do {
-            try engine.start()
-            configurationObserver = NotificationCenter.default.addObserver(
-                forName: .AVAudioEngineConfigurationChange, object: engine, queue: nil
-            ) { [weak self] _ in
-                self?.bufferWriter.interrupt("Конфигурация микрофона изменилась. Проверьте устройство и начните новую запись.")
-            }
-            await logger.info("Microphone capture started.")
-        } catch {
-            throw RecordingError.failedToStartCapture(error.localizedDescription)
-        }
+        await logger.info("Microphone capture started (AVCaptureSession).")
     }
 
-    deinit {
-        if let configurationObserver { NotificationCenter.default.removeObserver(configurationObserver) }
+    private func startOnQueue() throws {
+        let device: AVCaptureDevice?
+        if let preferredDeviceID {
+            guard let uid = Self.deviceUID(preferredDeviceID) else {
+                throw RecordingError.deviceUnavailable("Selected microphone UID is unavailable.")
+            }
+            device = AVCaptureDevice(uniqueID: uid)
+        } else {
+            device = AVCaptureDevice.default(for: .audio)
+        }
+        guard let device, device.hasMediaType(.audio) else {
+            throw RecordingError.deviceUnavailable("Selected microphone is unavailable to AVFoundation.")
+        }
+        let input = try AVCaptureDeviceInput(device: device)
+        deviceName = device.localizedName
+        try bufferWriter.prepare()
+        session.beginConfiguration()
+        guard session.canAddInput(input) else {
+            session.commitConfiguration()
+            throw RecordingError.failedToStartCapture("Cannot add microphone input.")
+        }
+        session.addInput(input)
+        guard session.canAddOutput(output) else {
+            session.commitConfiguration()
+            throw RecordingError.failedToStartCapture("Cannot add microphone output.")
+        }
+        output.audioSettings = [
+            AVFormatIDKey: kAudioFormatLinearPCM,
+            AVSampleRateKey: 48_000,
+            AVNumberOfChannelsKey: 1,
+            AVLinearPCMBitDepthKey: 32,
+            AVLinearPCMIsFloatKey: true,
+            AVLinearPCMIsNonInterleaved: false
+        ]
+        output.setSampleBufferDelegate(self, queue: queue)
+        session.addOutput(output)
+        session.commitConfiguration()
+        let center = NotificationCenter.default
+        observers.append(center.addObserver(forName: .AVCaptureSessionRuntimeError, object: session, queue: nil) { [weak self] note in
+            let error = note.userInfo?[AVCaptureSessionErrorKey] as? NSError
+            self?.bufferWriter.interrupt("Microphone capture failed: \(error?.localizedDescription ?? "unknown session error")")
+        })
+        observers.append(center.addObserver(forName: .AVCaptureDeviceWasDisconnected, object: device, queue: nil) { [weak self] _ in
+            self?.bufferWriter.interrupt("Микрофон отключён. Доступная запись сохранена.")
+        })
+        session.startRunning()
+        guard session.isRunning, let clock = session.synchronizationClock else {
+            throw RecordingError.failedToStartCapture("Microphone session or clock did not start.")
+        }
+        self.clock = clock
     }
 
     public func stop() async throws -> AVAudioFramePosition {
-        if let configurationObserver { NotificationCenter.default.removeObserver(configurationObserver) }
-        configurationObserver = nil
-        engine.inputNode.removeTap(onBus: 0)
-        engine.stop()
-        let frames = try bufferWriter.finish()
+        let frames: AVAudioFramePosition = try await withCheckedThrowingContinuation { continuation in
+            queue.async {
+                for observer in self.observers { NotificationCenter.default.removeObserver(observer) }
+                self.observers.removeAll()
+                self.session.stopRunning()
+                self.output.setSampleBufferDelegate(nil, queue: nil)
+                // Finalize behind callbacks already queued during stopRunning, preserving the tail.
+                self.queue.async {
+                    self.clock = nil
+                    do { continuation.resume(returning: try self.bufferWriter.finish()) }
+                    catch { continuation.resume(throwing: error) }
+                }
+            }
+        }
         await logger.info("Microphone capture stopped.")
         return frames
     }
+
+    public func setMuted(_ muted: Bool) { bufferWriter.setMuted(muted) }
 
     public func setFailureHandler(_ handler: @escaping @Sendable (String) -> Void) {
         bufferWriter.setFailureHandler(handler)
     }
 
-    private func configurePreferredInputDevice() throws {
-        guard let preferredDeviceID else { return }
-        let catalog = MicrophoneDeviceCatalog()
-        let defaultDeviceID = catalog.defaultInputDeviceID()
-        if preferredDeviceID == defaultDeviceID {
-            return
-        }
+    deinit {
+        for observer in observers { NotificationCenter.default.removeObserver(observer) }
+    }
 
-        guard let audioUnit = engine.inputNode.audioUnit else {
-            throw RecordingError.deviceUnavailable("AVAudioEngine input audio unit is unavailable for microphone selection.")
-        }
+    private static func deviceUID(_ id: AudioDeviceID) -> String? {
+        var address = AudioObjectPropertyAddress(mSelector: kAudioDevicePropertyDeviceUID,
+            mScope: kAudioObjectPropertyScopeGlobal, mElement: kAudioObjectPropertyElementMain)
+        var value: Unmanaged<CFString>?
+        var size = UInt32(MemoryLayout<Unmanaged<CFString>?>.size)
+        guard AudioObjectGetPropertyData(id, &address, 0, nil, &size, &value) == noErr else { return nil }
+        return value?.takeRetainedValue() as String?
+    }
+}
 
-        var deviceID = preferredDeviceID
-        let status = AudioUnitSetProperty(
-            audioUnit,
-            kAudioOutputUnitProperty_CurrentDevice,
-            kAudioUnitScope_Global,
-            0,
-            &deviceID,
-            UInt32(MemoryLayout<AudioDeviceID>.size)
-        )
-
-        guard status == noErr else {
-            throw RecordingError.deviceUnavailable(
-                "Could not select the requested microphone device. On macOS, AVAudioEngine input-device selection is best effort and may require the device to be available through the engine's I/O configuration."
-            )
-        }
+extension MicrophoneCaptureService: AVCaptureAudioDataOutputSampleBufferDelegate {
+    public func captureOutput(_ output: AVCaptureOutput, didOutput sampleBuffer: CMSampleBuffer,
+                              from connection: AVCaptureConnection) {
+        guard let clock else { return }
+        do {
+            let time = CMSyncConvertTime(CMSampleBufferGetPresentationTimeStamp(sampleBuffer),
+                                       from: clock, to: CMClockGetHostTimeClock())
+            guard time.isNumeric else {
+                throw RecordingError.incompatibleAudioFormat("Microphone timestamp is unavailable.")
+            }
+            bufferWriter.append(try AVAudioPCMBuffer.make(from: sampleBuffer), at: time.seconds)
+        } catch { bufferWriter.fail(error.localizedDescription) }
     }
 }
 
 extension MicrophoneCaptureService: RecordingCaptureService {
     public var sourceDescription: String? { deviceName }
-}
-
-enum AVAudioSessionDeviceResolver {
-    static func currentInputName(preferredDeviceID: AudioDeviceID?) -> String? {
-        if let preferredDeviceID {
-            return MicrophoneDeviceCatalog().availableMicrophones().first(where: { $0.id == preferredDeviceID })?.name
-        }
-        return AVCaptureDevice.default(for: .audio)?.localizedName
-    }
 }

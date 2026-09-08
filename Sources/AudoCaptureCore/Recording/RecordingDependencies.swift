@@ -12,6 +12,7 @@ public protocol PermissionsProviding: Sendable {
 extension PermissionsManager: PermissionsProviding {}
 
 public protocol RecordingControlling: Sendable {
+    func setMuted(microphone: Bool, system: Bool) async
     func startRecording(preferredMicrophoneDeviceID: UInt32?) async throws -> RecordingStartupReport
     func stopRecording(openFolder: Bool, bitrate: Int) async throws -> RecordingSessionResult
     func noteInterruption(_ reason: String) async
@@ -24,6 +25,7 @@ public protocol RecordingControlling: Sendable {
 }
 
 public protocol RecordingCaptureService: Sendable {
+    func setMuted(_ muted: Bool)
     var sourceDescription: String? { get }
     func setFailureHandler(_ handler: @escaping @Sendable (String) -> Void)
     func start() async throws

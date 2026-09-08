@@ -4,6 +4,26 @@ import Testing
 @testable import AudoCaptureCore
 
 struct RecordingManagerTests {
+    @Test func muteIsAppliedBeforeStartAndIndependentlyDuringRecording() async throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let mic = TestCaptureService(sourceDescription: "Mic", fileURL: nil)
+        let system = TestCaptureService(sourceDescription: "System", fileURL: nil)
+        let manager = RecordingManager(permissionsManager: TestPermissionsProvider(),
+            directoryManager: RecordingDirectoryManager(recordingsRootOverride: root),
+            exporter: TestExporter(), logger: .disabled,
+            captureFactory: TestCaptureFactory(microphone: mic, system: system),
+            folderOpener: NoopFolderOpener(), microphoneCatalog: TestMicrophoneCatalog())
+        await manager.setMuted(microphone: true, system: false)
+        _ = try await manager.startRecording()
+        #expect(mic.muteEvents == [true])
+        #expect(system.muteEvents == [false])
+        await manager.setMuted(microphone: false, system: true)
+        #expect(mic.muteEvents == [true, false])
+        #expect(system.muteEvents == [false, true])
+        _ = try await manager.stopRecording(openFolder: false)
+    }
+
     @Test
     func startRecordingCleansUpSessionDirectoryWhenBothCapturePipelinesFail() async throws {
         let root = FileManager.default.temporaryDirectory
@@ -347,6 +367,11 @@ private struct TestPermissionsProvider: PermissionsProviding {
 }
 
 private final class TestCaptureService: RecordingCaptureService, @unchecked Sendable {
+    private let muteLock = NSLock()
+    private var recordedMutes: [Bool] = []
+    var muteEvents: [Bool] { muteLock.withLock { recordedMutes } }
+    func setMuted(_ muted: Bool) { muteLock.withLock { recordedMutes.append(muted) } }
+
     let sourceDescription: String?
     let fileURL: URL?
     let fileURLProvider: ((RecordingDirectoryLayout) -> URL)?

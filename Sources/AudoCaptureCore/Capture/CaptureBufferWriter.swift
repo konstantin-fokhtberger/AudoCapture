@@ -14,6 +14,22 @@ final class CaptureBufferWriter: @unchecked Sendable {
     private var converter: AVAudioConverter?
     private var sourceFormat: AVAudioFormat?
     private var accepting = false
+    private var muted = false
+
+    func setMuted(_ value: Bool) {
+        var errorMessage: String?
+        queue.sync {
+            guard muted != value else { return }
+            do {
+                if let converter {
+                    try AVAudioPCMBuffer.drain(converter, targetFormat: targetFormat) { try writeConverted($0) }
+                    self.converter = nil
+                }
+                muted = value
+            } catch { errorMessage = error.localizedDescription }
+        }
+        if let errorMessage { fail(errorMessage) }
+    }
     private var failure: String?
     private var failureHandler: (@Sendable (String) -> Void)?
 
@@ -127,7 +143,18 @@ final class CaptureBufferWriter: @unchecked Sendable {
             }
             output = trimmed
         }
-        try writer.append(output)
+        if muted {
+            guard let silence = AVAudioPCMBuffer(pcmFormat: output.format, frameCapacity: output.frameLength) else {
+                throw RecordingError.failedToCreateFile("Could not allocate muted audio buffer.")
+            }
+            silence.frameLength = output.frameLength
+            for part in UnsafeMutableAudioBufferListPointer(silence.mutableAudioBufferList) {
+                if let data = part.mData { memset(data, 0, Int(part.mDataByteSize)) }
+            }
+            try writer.append(silence)
+        } else {
+            try writer.append(output)
+        }
         writtenFrames += Int64(output.frameLength)
     }
 
