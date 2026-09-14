@@ -25,40 +25,45 @@ struct ContentView: View {
     }
 
     private var compactView: some View {
-        HStack(spacing: 16) {
-            Button(action: toggleRecording) {
-                Image(systemName: viewModel.status == .recording ? "stop.fill" : "record.circle")
-                    .font(.system(size: 18, weight: .semibold))
-                    .frame(width: 30, height: 30)
-            }
-            .buttonStyle(.borderedProminent)
-            .tint(viewModel.status == .recording ? .red : .accentColor)
-            .disabled(isTransitioning || viewModel.updatingMute)
-            .keyboardShortcut(.defaultAction)
-            .accessibilityLabel(viewModel.status == .recording ? "Остановить и сохранить" : "Начать запись")
-            .help(viewModel.status == .recording ? "Остановить и сохранить" : "Начать запись")
-
-            VStack(spacing: 3) {
-                if isTransitioning {
-                    ProgressView().controlSize(.small)
-                } else {
-                    Image(systemName: hasWarning ? "exclamationmark.triangle.fill" : "dot.radiowaves.left.and.right")
-                        .font(.system(size: 16, weight: .semibold))
-                        .foregroundStyle(hasWarning ? .orange : (viewModel.status == .recording ? .red : Color.secondary))
+        Grid(horizontalSpacing: 8, verticalSpacing: 6) {
+            GridRow {
+                Button(action: toggleRecording) {
+                    Image(systemName: viewModel.status == .recording ? "stop.fill" : "record.circle")
+                        .font(.system(size: 18, weight: .semibold))
+                        .frame(width: 30, height: 30)
                 }
-                Text(viewModel.status == .recording ? (viewModel.microphoneMuted && viewModel.systemMuted ? "ТИШИНА" : "ON AIR") : compactStatus)
-                    .font(.system(size: 9, weight: .bold, design: .rounded))
+                .buttonStyle(.borderedProminent)
+                .tint(viewModel.status == .recording ? .red : .accentColor)
+                .disabled(isTransitioning || viewModel.updatingMute)
+                .keyboardShortcut(.defaultAction)
+                .accessibilityLabel(viewModel.status == .recording ? "Остановить и сохранить" : "Начать запись")
+                .help(viewModel.status == .recording ? "Остановить и сохранить" : "Начать запись")
+
+                VStack(spacing: 3) {
+                    if isTransitioning {
+                        ProgressView().controlSize(.small)
+                    } else {
+                        Image(systemName: hasWarning ? "exclamationmark.triangle.fill" : "dot.radiowaves.left.and.right")
+                            .font(.system(size: 16, weight: .semibold))
+                            .foregroundStyle(hasWarning ? .orange : (viewModel.status == .recording ? .red : Color.secondary))
+                    }
+                    Text(viewModel.status == .recording ? (viewModel.microphoneMuted && viewModel.systemMuted ? "ТИШИНА" : "ON AIR") : compactStatus)
+                        .font(.system(size: 9, weight: .bold, design: .rounded))
+                }
+                .frame(width: 62)
+                .accessibilityElement(children: .ignore)
+                .accessibilityLabel(statusTitle)
+                .accessibilityValue(viewModel.elapsedText)
+                .help(statusTitle + (hasWarning ? ". Разверните окно для подробностей." : ""))
             }
-            .frame(width: 62)
-            .accessibilityElement(children: .ignore)
-            .accessibilityLabel(statusTitle)
-            .accessibilityValue(viewModel.elapsedText)
-            .help(statusTitle + (hasWarning ? ". Разверните окно для подробностей." : ""))
-            sourceButtons
-            appearanceButton
+            GridRow {
+                muteButton(microphone: true)
+                muteButton(microphone: false)
+                appearanceButton
+            }
         }
         .padding(10)
-        .frame(width: 278, height: 56)
+        .frame(width: 176, height: 96)
     }
 
     private var sourceButtons: some View {

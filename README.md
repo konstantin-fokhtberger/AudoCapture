@@ -52,7 +52,7 @@ Scripts/build-app-bundle.sh debug
 Scripts/build-app-bundle.sh release
 ```
 
-Результаты: `.build/bundles/debug/AudoCaptureApp.app` и `.build/bundles/release/AudoCaptureApp.app`. Сборщик проверяет plist, arm64, совпадение minOS и подпись. Версия 0.1.0 (4) хранится в `Config/Info.plist`. Bundle включает иконку микрофона; её исходник - `Scripts/generate-app-icon.swift`.
+Результаты: `.build/bundles/debug/AudoCaptureApp.app` и `.build/bundles/release/AudoCaptureApp.app`. Сборщик проверяет plist, arm64, совпадение minOS и подпись. Версия 0.1.0 (5) хранится в `Config/Info.plist`. Bundle включает иконку микрофона; её исходник - `Scripts/generate-app-icon.swift`.
 
 Текущие автоматические проверки выполнены с полным Xcode и Swift 6.3.3 на macOS 26.6.2. Подпись Developer ID и notarization для передачи коллегам относятся к I6.
 
@@ -75,3 +75,5 @@ B09: реальные устройства и сон (обработчики у�
 После перехода с ad-hoc на Apple Development разрешения нужно выдать заново. Только при подтверждённом в журнале TCC несовпадении code requirement сбрасывайте конкретное разрешение AudoCapture: `tccutil reset ScreenCapture dev.codex.AudoCapture` (для микрофона - `Microphone`). Сброс всех приложений не требуется.
 
 Apple Development служит локальным испытаниям; это не Developer ID и не нотарифицированный выпуск для коллег.
+
+Компактный режим build 5: два ряда, Record/Stop и On Air сверху, микрофон и системный звук под ними; кнопка разворачивания справа внизу. Размер содержимого 176 × 96 pt.
