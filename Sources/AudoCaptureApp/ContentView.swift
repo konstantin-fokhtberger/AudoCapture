@@ -12,7 +12,7 @@ struct ContentView: View {
             else { fullView }
         }
         .fixedSize()
-        .background(CompactWindowLevel(isCompact: isCompact))
+        .background(CompactWindowLevel(isCompact: isCompact, expand: { isCompact = false }))
         .task { viewModel.refreshEnvironment() }
         .task(id: viewModel.status) {
             guard viewModel.status == .recording else { return }
@@ -59,11 +59,10 @@ struct ContentView: View {
             GridRow {
                 muteButton(microphone: true)
                 muteButton(microphone: false)
-                appearanceButton
             }
         }
         .padding(10)
-        .frame(width: 176, height: 96)
+        .frame(width: 144, height: 96)
     }
 
     private var sourceButtons: some View {
